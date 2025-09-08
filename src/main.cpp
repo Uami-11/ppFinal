@@ -9,7 +9,7 @@
 #define RAYTMX_IMPLEMENTATION
 #include "raytmx.h"
 
-
+// comment
 
 class Slash {
 public:

@@ -1,3 +1,4 @@
+#pragma once
 #include <raylib.h> // game header
 #include "raymath.h" // controlling vectors
 #include <string> // for frame names
@@ -10,6 +11,47 @@
 #include "raytmx.h"
 
 // comment
+
+
+class Enemy {
+protected:
+    Vector2 position;
+    Texture2D sprite;
+    int frameWidth, frameHeight;
+    int health;
+    bool alive;
+
+public:
+    Enemy(Vector2 pos, const char* spritePath, int frameW, int frameH, int hp)
+        : position(pos), frameWidth(frameW), frameHeight(frameH), health(hp), alive(true)
+    {
+        sprite = LoadTexture(spritePath);
+    }
+
+    virtual ~Enemy() {
+        UnloadTexture(sprite);
+    }
+
+    virtual void Update(float dt) {
+        // Default: maybe idle animation, or nothing
+    }
+
+    virtual void Draw() {
+        if (!alive) return;
+        Rectangle src = {0, 0, (float)frameWidth, (float)frameHeight};
+        Rectangle dst = {position.x, position.y, (float)frameWidth, (float)frameHeight};
+        DrawTexturePro(sprite, src, dst, {0, 0}, 0.0f, WHITE);
+    }
+
+    virtual void TakeDamage(int dmg) {
+        health -= dmg;
+        if (health <= 0) alive = false;
+    }
+
+    bool IsAlive() const { return alive; }
+    Vector2 GetPosition() const { return position; }
+};
+
 
 class Slash {
 public:
@@ -74,6 +116,7 @@ public:
 
 Texture2D Slash::frames[3]; // definition
 std::vector<Slash> slashes;
+std::vector<Enemy*> enemies;
 
 
 // creates a state machine for the player
@@ -270,6 +313,14 @@ void GameUpdate() {
                 [](Slash& s){ return s.finished; }),
         slashes.end()
     );
+
+    for (auto& e : enemies) e->Update(GetFrameTime());
+
+    enemies.erase(
+        std::remove_if(enemies.begin(), enemies.end(),
+                   [](Enemy* e) { return !e->IsAlive(); }),
+        enemies.end()
+    );
 }
 
 void GameRender() {
@@ -281,6 +332,7 @@ void GameRender() {
     DrawTexture(tilemap, 0, 0, WHITE);
     player.Draw();
     for (auto& s : slashes) s.Draw();
+    for (auto& e : enemies) e->Draw();
     EndMode2D();
 
     EndTextureMode();
@@ -312,6 +364,8 @@ void GameRender() {
 void GameShutdown() {
     player.Unload();
     Slash::UnloadAssets();
+    for (auto& e : enemies) delete e;
+    enemies.clear();
     UnloadTexture(tilemap);
     UnloadRenderTexture(target);
     CloseWindow();

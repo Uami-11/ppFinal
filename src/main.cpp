@@ -432,6 +432,8 @@ BigDemon::BigDemon(Vector2 pos)
 Player player; // creates player
 Camera2D camera; // creates camera
 
+Texture2D tilemap;
+
 RenderTexture2D target; // Camera size
 bool fullscreen = false;
 
@@ -465,6 +467,10 @@ void GameStartup() {
                         enemies.push_back(new Goblin({(float)obj->x, (float)obj->y}));
                     else if (strcmp(obj->name, "imp") == 0)
                         enemies.push_back(new Imp({(float)obj->x, (float)obj->y}));
+                    else if (strcmp(obj->name, "big_demon") == 0)
+                        enemies.push_back(new BigDemon({(float)obj->x, (float)obj->y}));
+                    else if (strcmp(obj->name, "big_zombie") == 0)
+                        enemies.push_back(new BigZombie({(float)obj->x, (float)obj->y}));
                 }
             }
         }
@@ -479,7 +485,7 @@ void GameStartup() {
     target = LoadRenderTexture(320, 180);
     SetTextureFilter(target.texture, TEXTURE_FILTER_POINT);
 
-    tilemap = LoadTexture("assets/Tilemap/test.png");
+    //tilemap = LoadTexture("assets/Tilemap/First.png");
 
     player.Load();
     Slash::LoadAssets();
@@ -546,6 +552,7 @@ void GameRender() {
     ClearBackground(BLACK);
 
     BeginMode2D(camera);
+    //DrawTexture(tilemap, 0, 0, WHITE);
     DrawTMX(currentMap, &camera, 0, 0, WHITE);
     player.Draw();
     for (auto& s : slashes) s.Draw();
@@ -583,6 +590,7 @@ void GameShutdown() {
     Slash::UnloadAssets();
     for (auto& e : enemies) delete e;
     enemies.clear();
+    //UnloadTexture(tilemap);
     UnloadTMX(currentMap); // Free the TMX map
     UnloadRenderTexture(target);
     CloseWindow();

@@ -73,7 +73,7 @@ public:
 
     void Draw();
 };
-
+Player player; // creates player
 enum class EnemyState {
     Patrol,
     Chase
@@ -95,22 +95,23 @@ protected:
     float detectRange;
 
     Vector2 target;
+    bool facingRight;           // For sprite flipping
+    Vector2 knockbackVelocity;  // Knockback applied when hit
+    float knockbackTimer;       // Duration for knockback
 
 public:
     Enemy(Vector2 pos, const char* spritePrefix, int hp, int dmg, float spd, float range);
-
     virtual ~Enemy();
 
     virtual void Update(float dt, const Player& player);
-
     virtual void Draw();
-
-    virtual void TakeDamage(int dmg);
+    virtual void TakeDamage(int dmg, Vector2 hitDirection);;
 
     bool IsAlive() const;
     int GetDamage() const;
     Vector2 GetPosition() const;
 };
+
 
 std::vector<Enemy*> enemies;
 
@@ -348,22 +349,22 @@ void Player::Draw() {
 // Enemy implementations
 Enemy::Enemy(Vector2 pos, const char* spritePrefix, int hp, int dmg, float spd, float range)
     : position(pos), spawnPos(pos), currentFrame(0), frameTimer(0.0f), frameTime(0.15f), speed(spd),
-      health(hp), damage(dmg), alive(true), state(EnemyState::Patrol), detectRange(range), target(pos)
+      health(hp), damage(dmg), alive(true), state(EnemyState::Patrol), detectRange(range),
+      target(pos), facingRight(true), knockbackVelocity({0,0}), knockbackTimer(0.0f)
 {
     for (int i = 0; i < 4; i++) {
         std::string path = "assets/Enemies/" + std::string(spritePrefix) + "_run_anim_f" + std::to_string(i) + ".png";
         TraceLog(LOG_INFO, "Loading enemy frame: %s", path.c_str());
-        printf("Loading: %s\n", path.c_str());
         Texture2D texture = LoadTexture(path.c_str());
-        printf("Loading: %s\n", path.c_str());
-        if (texture.id == 0) { // Check if texture load failed
+        if (texture.id == 0) {
             TraceLog(LOG_WARNING, "Failed to load texture: %s", path.c_str());
-            runFrames[i] = {0}; // Assign default invalid texture
+            runFrames[i] = {0};
         } else {
             runFrames[i] = texture;
         }
     }
 }
+
 
 Enemy::~Enemy() {
     for (int i = 0; i < 4; i++) UnloadTexture(runFrames[i]);
@@ -372,6 +373,16 @@ Enemy::~Enemy() {
 void Enemy::Update(float dt, const Player& player) {
     if (!alive) return;
 
+    // If under knockback, apply it and reduce timer
+    if (knockbackTimer > 0.0f) {
+        position = Vector2Add(position, Vector2Scale(knockbackVelocity, dt * 60));
+        knockbackTimer -= dt;
+        if (knockbackTimer <= 0.0f) {
+            knockbackVelocity = {0, 0};
+        }
+        return; // Skip normal AI while knocked back
+    }
+
     // Check distance to player
     float dist = Vector2Distance(position, player.pos);
     if (dist < detectRange) {
@@ -379,7 +390,6 @@ void Enemy::Update(float dt, const Player& player) {
         target = player.pos;
     } else {
         state = EnemyState::Patrol;
-        // if close to current patrol target, choose a new random point
         if (Vector2Distance(position, target) < 5.0f) {
             target.x = GetRandomValue((int)spawnPos.x - 100, (int)spawnPos.x + 100);
             target.y = GetRandomValue((int)spawnPos.y - 100, (int)spawnPos.y + 100);
@@ -388,7 +398,10 @@ void Enemy::Update(float dt, const Player& player) {
 
     // Move towards target
     Vector2 dir = Vector2Normalize(Vector2Subtract(target, position));
-    position = Vector2Add(position, Vector2Scale(dir, speed * dt * 60)); // speed per frame
+    position = Vector2Add(position, Vector2Scale(dir, speed * dt * 60));
+
+    // Update facing direction
+    if (dir.x != 0) facingRight = (dir.x > 0);
 
     // Animate
     frameTimer += dt;
@@ -398,18 +411,34 @@ void Enemy::Update(float dt, const Player& player) {
     }
 }
 
+
 void Enemy::Draw() {
     if (!alive) return;
-    Rectangle src = {0, 0, (float)runFrames[currentFrame].width, (float)runFrames[currentFrame].height};
-    Rectangle dst = {position.x, position.y, (float)src.width, (float)src.height};
-    Vector2 origin = {src.width / 2.0f, src.height / 2.0f};
-    DrawTexturePro(runFrames[currentFrame], src, dst, origin, 0.0f, WHITE);
+    Texture2D tex = runFrames[currentFrame];
+
+    Rectangle src = {0, 0, (float)tex.width, (float)tex.height};
+    if (!facingRight) src.width *= -1; // Flip horizontally like player
+
+    Rectangle dst = {position.x, position.y, (float)tex.width, (float)tex.height};
+    Vector2 origin = {tex.width / 2.0f, tex.height / 2.0f};
+
+    DrawTexturePro(tex, src, dst, origin, 0.0f, WHITE);
 }
 
-void Enemy::TakeDamage(int dmg) {
+
+void Enemy::TakeDamage(int dmg, Vector2 hitDirection) {
     health -= dmg;
-    if (health <= 0) alive = false;
+    if (health <= 0) {
+        alive = false;
+        return;
+    }
+
+    // Apply knockback
+    Vector2 dirFromPlayer = Vector2Normalize(Vector2Subtract(position, player.pos)); 
+    knockbackVelocity = Vector2Scale(dirFromPlayer, 2.5f); // strength of knockback
+    knockbackTimer = 0.15f; // knockback duration in seconds
 }
+
 
 bool Enemy::IsAlive() const { return alive; }
 int Enemy::GetDamage() const { return damage; }
@@ -429,7 +458,7 @@ BigDemon::BigDemon(Vector2 pos)
     : Enemy(pos, "big_demon", 80, 15, 1.3f, 120.0f) {}
 
 // Globals
-Player player; // creates player
+
 Camera2D camera; // creates camera
 
 Texture2D tilemap;
@@ -526,7 +555,7 @@ void GameUpdate() {
         Rectangle hitbox = s.GetHitbox();
         for (auto& e : enemies) {
             if (CheckCollisionPointRec(e->GetPosition(), hitbox)) {
-                e->TakeDamage(10); // player deals 10 damage
+                e->TakeDamage(10, Vector2Normalize(Vector2Subtract(e->GetPosition(), player.pos))); // player deals 10 damage
             }
         }
     }

@@ -12,7 +12,8 @@
 // Game state enum
 enum class GameState {
     StartScreen,
-    Playing
+    Playing,
+    UpgradeScreen
 };
 
 // comment
@@ -47,7 +48,8 @@ std::vector<Slash> slashes;
 enum class PlayerState {
     Idle,
     Run,
-    Hit
+    Hit,
+    Dash
 };
 
 class Player {
@@ -59,6 +61,11 @@ public:
     int maxHealth = 100; // maximum health
     float damageCooldown = 0.0f; // cooldown timer to prevent rapid damage
     float damageCooldownDuration = 0.5f; // seconds between damage events
+    float dashTimer = 0.0f; // timer for dash duration
+    float dashCooldown = 0.0f; // cooldown timer for dash
+    float dashDuration = 0.2f; // dash duration in seconds
+    float dashCooldownDuration = 1.0f; // dash cooldown in seconds
+    float dashSpeed = 10.0f; // dash speed (5x normal speed of 2)
 
     PlayerState state = PlayerState::Idle; // default
 
@@ -173,14 +180,21 @@ std::vector<Vector2> bigDemonSpawners;
 float smallEnemySpawnTimer = 0.0f;
 float bigEnemySpawnTimer = 0.0f;
 float minuteTimer = 0.0f;
-float smallEnemySpawnInterval = 5.0f;
-float bigEnemySpawnInterval = 20.0f;
+float smallEnemySpawnInterval = 15.0f;
+float bigEnemySpawnInterval = 60.0f;
 
 // Wave system
 int currentWave = 1;
 int totalKills = 0;
-int requiredKills[8] = {3, 11, 31, 81, 191, 220, 300, 400};
+int requiredKills[8] = {15, 30, 50, 70, 110, 200, 350, 500};
 float playerDamage = 10.0f;
+
+// Upgrade system
+Texture2D attackCardTexture;
+Texture2D hpCardTexture;
+bool showUpgradeScreen = false;
+Rectangle attackCardRect = {80, 30, 80, 120}; // Left card
+Rectangle hpCardRect = {200, 30, 80, 120}; // Right card
 
 // Slash implementations
 void Slash::LoadAssets() {
@@ -254,56 +268,72 @@ void Player::Unload() {
 void Player::Update() {
     vel = {0, 0}; // velocity resets every frame, so that player only moves when they input
 
-    // Update damage cooldown
+    // Update timers
     if (damageCooldown > 0.0f) {
         damageCooldown -= GetFrameTime();
     }
-
-    // If in hit state, reduce timer
-    if (hitTimer > 0.0f) {
-        hitTimer -= GetFrameTime();
-        if (hitTimer <= 0.0f) {
-            // Reset back to idle after hit ends
-            state = PlayerState::Idle;
+    if (dashCooldown > 0.0f) {
+        dashCooldown -= GetFrameTime();
+    }
+    if (dashTimer > 0.0f) {
+        dashTimer -= GetFrameTime();
+        if (dashTimer <= 0.0f) {
+            state = PlayerState::Idle; // End dash
         }
-        return; // skip movement while hit
     }
 
-    // Movement input
-    if (IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_D)) {
-        vel.x = 2;
-        facingRight = true;
-    }
-    if (IsKeyDown(KEY_LEFT) || IsKeyDown(KEY_A)) {
-        vel.x = -2;
-        facingRight = false;
-    }
-    if (IsKeyDown(KEY_UP) || IsKeyDown(KEY_W)) vel.y = -2;
-    if (IsKeyDown(KEY_DOWN) || IsKeyDown(KEY_S)) vel.y = 2;
+    // If in hit or dash state, skip normal movement input
+    if (state == PlayerState::Hit || state == PlayerState::Dash) {
+        if (state == PlayerState::Hit) {
+            hitTimer -= GetFrameTime();
+            if (hitTimer <= 0.0f) {
+                state = PlayerState::Idle;
+            }
+        }
+        // Apply dash movement
+        if (state == PlayerState::Dash) {
+            vel = Vector2Scale(Vector2Normalize(vel), dashSpeed);
+        }
+    } else {
+        // Movement input
+        if (IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_D)) {
+            vel.x = 2;
+            facingRight = true;
+        }
+        if (IsKeyDown(KEY_LEFT) || IsKeyDown(KEY_A)) {
+            vel.x = -2;
+            facingRight = false;
+        }
+        if (IsKeyDown(KEY_UP) || IsKeyDown(KEY_W)) vel.y = -2;
+        if (IsKeyDown(KEY_DOWN) || IsKeyDown(KEY_S)) vel.y = 2;
 
-    // Trigger hit
-    if (IsKeyPressed(KEY_SPACE)) {
-        state = PlayerState::Hit;
-        hitTimer = hitDuration;
-        currentFrame = 0;
-    }
-
-    if (IsKeyPressed(KEY_Z) || IsKeyPressed(KEY_J)) {
-        // attack and animation
-        Vector2 dir = {0, 0};
-
-        // Use last velocity if moving
-        if (vel.x != 0 || vel.y != 0) {
-            dir = Vector2Normalize(vel);
-        } else {
-            // fallback to facing direction
-            dir = facingRight ? Vector2{1,0} : Vector2{-1,0};
+        // Trigger dash
+        if ((IsKeyPressed(KEY_LEFT_SHIFT) || IsKeyPressed(KEY_RIGHT_SHIFT)) && dashCooldown <= 0.0f && (vel.x != 0 || vel.y != 0)) {
+            state = PlayerState::Dash;
+            dashTimer = dashDuration;
+            dashCooldown = dashCooldownDuration;
         }
 
-        slashes.push_back(Slash(pos, dir));
+        // Trigger hit
+        if (IsKeyPressed(KEY_SPACE)) {
+            state = PlayerState::Hit;
+            hitTimer = hitDuration;
+            currentFrame = 0;
+        }
+
+        if (IsKeyPressed(KEY_Z) || IsKeyPressed(KEY_J)) {
+            // attack and animation
+            Vector2 dir = {0, 0};
+            if (vel.x != 0 || vel.y != 0) {
+                dir = Vector2Normalize(vel);
+            } else {
+                dir = facingRight ? Vector2{1,0} : Vector2{-1,0};
+            }
+            slashes.push_back(Slash(pos, dir));
+        }
     }
 
-    // Apply movement with collision check, separate x and y
+    // Apply movement with collision check
     float new_x = pos.x + vel.x;
     float new_y = pos.y + vel.y;
     Rectangle new_rect_x = { new_x - 8, pos.y - 8, 16, 16 };
@@ -368,8 +398,10 @@ void Player::Update() {
     if (!collision_x) pos.x = new_x;
     if (!collision_y) pos.y = new_y;
 
-    if (vel.x != 0 || vel.y != 0) state = PlayerState::Run; // when moving, use the run animation
-    else state = PlayerState::Idle;
+    if (state != PlayerState::Hit && state != PlayerState::Dash) {
+        if (vel.x != 0 || vel.y != 0) state = PlayerState::Run;
+        else state = PlayerState::Idle;
+    }
 
     // Update animation frame
     frameTimer += GetFrameTime();
@@ -380,14 +412,14 @@ void Player::Update() {
 
     if (state == PlayerState::Idle && currentFrame >= 4) currentFrame = 0;
     if (state == PlayerState::Run && currentFrame >= 4) currentFrame = 0;
-    if (state == PlayerState::Hit) currentFrame = 0; // single-frame sprite
+    if (state == PlayerState::Hit || state == PlayerState::Dash) currentFrame = 0; // Use hit sprite for dash
 }
 
 void Player::Draw() {
     Texture2D sprite;
     if (state == PlayerState::Idle) sprite = idleAnim[currentFrame];
     else if (state == PlayerState::Run) sprite = runAnim[currentFrame];
-    else sprite = hitSprite;
+    else sprite = hitSprite; // Use hit sprite for hit and dash
 
     Rectangle src = {0, 0, (float)sprite.width, (float)sprite.height}; // what its drawing (source)
     if (!facingRight) src.width *= -1; // flips to left if its not facing right
@@ -740,6 +772,8 @@ void ResetGame() {
     player.currentFrame = 0;
     player.frameTimer = 0.0f;
     player.hitTimer = 0.0f;
+    player.dashTimer = 0.0f;
+    player.dashCooldown = 0.0f;
     playerDamage = 10.0f;
 
     // Reset spawn timers
@@ -752,9 +786,7 @@ void ResetGame() {
     // Reset wave
     currentWave = 1;
     totalKills = 0;
-
-    // Reset camera
-    camera.target = player.pos;
+    showUpgradeScreen = false;
 }
 
 // Defining everything for the game
@@ -777,6 +809,16 @@ void GameStartup() {
     startScreen = LoadTexture("assets/Images/start.png");
     if (startScreen.id == 0) {
         TraceLog(LOG_WARNING, "Failed to load start screen texture: assets/Images/start.png");
+    }
+
+    // Load upgrade card textures
+    attackCardTexture = LoadTexture("assets/Images/attack.png");
+    hpCardTexture = LoadTexture("assets/Images/hp.png");
+    if (attackCardTexture.id == 0) {
+        TraceLog(LOG_WARNING, "Failed to load attack card texture: assets/Images/attack.png");
+    }
+    if (hpCardTexture.id == 0) {
+        TraceLog(LOG_WARNING, "Failed to load hp card texture: assets/Images/hp.png");
     }
 
     // Collect spawner positions from object layer
@@ -925,26 +967,26 @@ void GameUpdate() {
         minuteTimer += dt;
 
         // Check for wave progression
-        if (currentWave <= 8 && totalKills >= requiredKills[currentWave - 1]) {
+        if (currentWave <= 8 && totalKills >= requiredKills[currentWave - 1] && !showUpgradeScreen) {
             player.maxHealth = (int)(player.maxHealth * 1.2f);
             player.health = player.maxHealth;
             playerDamage *= 1.1f;
             currentWave++;
             // Increase spawn speed
-            smallEnemySpawnInterval *= 1.0f;
-            bigEnemySpawnInterval *= 1.0f;
-            minuteTimer = 0.0f; // Reset minute timer
-            if (currentWave > 8 && !fadingOut) {
-                targetState = GameState::StartScreen;
-                fadingOut = true;
-            }
-        }
-
-        // Check for minute-based spawn speed increase
-        if (minuteTimer >= 60.0f) {
             smallEnemySpawnInterval *= 0.9f;
             bigEnemySpawnInterval *= 0.9f;
             minuteTimer = 0.0f; // Reset minute timer
+            showUpgradeScreen = true;
+            gameState = GameState::UpgradeScreen;
+        }
+
+        // Check for minute-based spawn speed increase or upgrade screen
+        if (minuteTimer >= 60.0f && !showUpgradeScreen) {
+            smallEnemySpawnInterval *= 0.9f;
+            bigEnemySpawnInterval *= 0.9f;
+            minuteTimer = 0.0f; // Reset minute timer
+            showUpgradeScreen = true;
+            gameState = GameState::UpgradeScreen;
         }
 
         // Handle spawning
@@ -978,6 +1020,38 @@ void GameUpdate() {
                 if (e) enemies.push_back(e);
             }
         }
+    } else if (gameState == GameState::UpgradeScreen) {
+        // Check for mouse click on upgrade cards
+        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            Vector2 mousePos = GetMousePosition();
+            // Convert to render texture coordinates
+            float scaleX = (float)GetScreenWidth() / 320;
+            float scaleY = (float)GetScreenHeight() / 180;
+            float scale = fmin(scaleX, scaleY);
+            float offsetX = (GetScreenWidth() - 320 * scale) / 2;
+            float offsetY = (GetScreenHeight() - 180 * scale) / 2;
+            Vector2 renderMousePos = {
+                (mousePos.x - offsetX) / scale,
+                (mousePos.y - offsetY) / scale
+            };
+
+            if (CheckCollisionPointRec(renderMousePos, attackCardRect)) {
+                playerDamage *= 1.2f; // 20% attack boost
+                showUpgradeScreen = false;
+                gameState = GameState::Playing;
+            } else if (CheckCollisionPointRec(renderMousePos, hpCardRect)) {
+                player.maxHealth = (int)(player.maxHealth * 1.2f); // 20% HP boost
+                player.health = player.maxHealth; // Restore health
+                showUpgradeScreen = false;
+                gameState = GameState::Playing;
+            }
+        }
+    }
+
+    // Check for game over
+    if (currentWave > 8 && !fadingOut && gameState != GameState::UpgradeScreen) {
+        targetState = GameState::StartScreen;
+        fadingOut = true;
     }
 }
 
@@ -1004,7 +1078,7 @@ void GameRender() {
                 {0, 0}, 0.0f, WHITE
             );
         }
-    } else if (gameState == GameState::Playing) {
+    } else if (gameState == GameState::Playing || gameState == GameState::UpgradeScreen) {
         BeginMode2D(camera);
         DrawTMX(currentMap, &camera, 0, 0, WHITE);
         player.Draw();
@@ -1019,6 +1093,34 @@ void GameRender() {
         if (currentWave <= 8) {
             DrawText(TextFormat("WAVE %d", currentWave), 320 - 100, 10, 20, WHITE);
             DrawText(TextFormat("KILLS: %d", totalKills), 320 - 100, 35, 10, WHITE);
+        }
+
+        // Draw upgrade cards
+        if (gameState == GameState::UpgradeScreen) {
+            // Semi-transparent overlay
+            DrawRectangle(0, 0, 320, 180, Fade(BLACK, 0.5f));
+
+            // Draw attack card
+            if (attackCardTexture.id != 0) {
+                DrawTexturePro(
+                    attackCardTexture,
+                    {0, 0, (float)attackCardTexture.width, (float)attackCardTexture.height},
+                    attackCardRect,
+                    {0, 0}, 0.0f, WHITE
+                );
+                DrawText("Attack +20%", attackCardRect.x + 10, attackCardRect.y + 10, 10, WHITE);
+            }
+
+            // Draw HP card
+            if (hpCardTexture.id != 0) {
+                DrawTexturePro(
+                    hpCardTexture,
+                    {0, 0, (float)hpCardTexture.width, (float)hpCardTexture.height},
+                    hpCardRect,
+                    {0, 0}, 0.0f, WHITE
+                );
+                DrawText("HP +20%", hpCardRect.x + 10, hpCardRect.y + 10, 10, WHITE);
+            }
         }
     }
 
@@ -1061,6 +1163,8 @@ void GameShutdown() {
     enemyPool.clear();
     enemies.clear();
     UnloadTexture(startScreen); // Unload start screen texture
+    UnloadTexture(attackCardTexture); // Unload upgrade card textures
+    UnloadTexture(hpCardTexture);
     UnloadTMX(currentMap); // Free the TMX map
     UnloadRenderTexture(target);
     CloseWindow();

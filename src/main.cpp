@@ -173,13 +173,13 @@ std::vector<Vector2> bigDemonSpawners;
 float smallEnemySpawnTimer = 0.0f;
 float bigEnemySpawnTimer = 0.0f;
 float minuteTimer = 0.0f;
-float smallEnemySpawnInterval = 15.0f;
-float bigEnemySpawnInterval = 60.0f;
+float smallEnemySpawnInterval = 5.0f;
+float bigEnemySpawnInterval = 20.0f;
 
 // Wave system
 int currentWave = 1;
 int totalKills = 0;
-int requiredKills[8] = {3, 8, 20, 50, 110, 200, 350, 500};
+int requiredKills[8] = {3, 11, 31, 81, 191, 220, 300, 400};
 float playerDamage = 10.0f;
 
 // Slash implementations
@@ -931,8 +931,8 @@ void GameUpdate() {
             playerDamage *= 1.1f;
             currentWave++;
             // Increase spawn speed
-            smallEnemySpawnInterval *= 0.9f;
-            bigEnemySpawnInterval *= 0.9f;
+            smallEnemySpawnInterval *= 1.0f;
+            bigEnemySpawnInterval *= 1.0f;
             minuteTimer = 0.0f; // Reset minute timer
             if (currentWave > 8 && !fadingOut) {
                 targetState = GameState::StartScreen;

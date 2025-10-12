@@ -49,6 +49,10 @@ public:
     Vector2 pos{160, 90}; // what position its at (starts at centre)
     Vector2 vel{0, 0}; // velocity/movement
     bool facingRight = true; // the player frame is only facing right, so I have to mirror it myself
+    int health = 100; // current health
+    int maxHealth = 100; // maximum health
+    float damageCooldown = 0.0f; // cooldown timer to prevent rapid damage
+    float damageCooldownDuration = 0.5f; // seconds between damage events
 
     PlayerState state = PlayerState::Idle; // default
 
@@ -66,14 +70,16 @@ public:
     float hitDuration = 0.2f; // seconds
 
     void Load();
-
     void Unload();
-
     void Update();
-
     void Draw();
+    void DrawHealthBar(); // New method to draw health bar
+    void TakeDamage(int dmg); // New method to take damage
+    Rectangle GetHitbox() const; // New method to get player hitbox
 };
+
 Player player; // creates player
+
 enum class EnemyState {
     Patrol,
     Chase
@@ -105,13 +111,13 @@ public:
 
     virtual void Update(float dt, const Player& player);
     virtual void Draw();
-    virtual void TakeDamage(int dmg, Vector2 hitDirection);;
+    virtual void TakeDamage(int dmg, Vector2 hitDirection);
 
     bool IsAlive() const;
     int GetDamage() const;
     Vector2 GetPosition() const;
+    Rectangle GetHitbox() const; // New method to get enemy hitbox for collision
 };
-
 
 std::vector<Enemy*> enemies;
 
@@ -207,6 +213,11 @@ void Player::Unload() {
 
 void Player::Update() {
     vel = {0, 0}; // velocity resets every frame, so that player only moves when they input
+
+    // Update damage cooldown
+    if (damageCooldown > 0.0f) {
+        damageCooldown -= GetFrameTime();
+    }
 
     // If in hit state, reduce timer
     if (hitTimer > 0.0f) {
@@ -346,6 +357,39 @@ void Player::Draw() {
     DrawTexturePro(sprite, src, dest, origin, 0.0f, WHITE);
 }
 
+void Player::DrawHealthBar() {
+    // Draw in screen coordinates (top-left of render texture)
+    float barWidth = 100.0f; // Width of health bar in pixels
+    float barHeight = 10.0f; // Height of health bar
+    float x = 10.0f; // Margin from left
+    float y = 10.0f; // Margin from top
+
+    // Background (max health, red)
+    DrawRectangle(x, y, barWidth, barHeight, RED);
+
+    // Foreground (current health, green)
+    float healthRatio = (float)health / maxHealth;
+    DrawRectangle(x, y, barWidth * healthRatio, barHeight, GREEN);
+
+    // Optional: Draw HP text
+    DrawText(TextFormat("%d/%d", health, maxHealth), x + 5, y+1, 10, WHITE);
+}
+
+void Player::TakeDamage(int dmg) {
+    if (damageCooldown <= 0.0f) {
+        health = std::max(0, health - dmg);
+        damageCooldown = damageCooldownDuration; // Reset cooldown
+        if (health <= 0) {
+            // Optional: Handle player death (e.g., game over or respawn)
+            TraceLog(LOG_INFO, "Player died!");
+        }
+    }
+}
+
+Rectangle Player::GetHitbox() const {
+    return {pos.x - 8, pos.y - 8, 16, 16}; // 16x16 hitbox centered on position
+}
+
 // Enemy implementations
 Enemy::Enemy(Vector2 pos, const char* spritePrefix, int hp, int dmg, float spd, float range)
     : position(pos), spawnPos(pos), currentFrame(0), frameTimer(0.0f), frameTime(0.15f), speed(spd),
@@ -365,7 +409,6 @@ Enemy::Enemy(Vector2 pos, const char* spritePrefix, int hp, int dmg, float spd, 
     }
 }
 
-
 Enemy::~Enemy() {
     for (int i = 0; i < 4; i++) UnloadTexture(runFrames[i]);
 }
@@ -375,7 +418,39 @@ void Enemy::Update(float dt, const Player& player) {
 
     // If under knockback, apply it and reduce timer
     if (knockbackTimer > 0.0f) {
-        position = Vector2Add(position, Vector2Scale(knockbackVelocity, dt * 60));
+        Vector2 newPos = Vector2Add(position, Vector2Scale(knockbackVelocity, dt * 60));
+        Rectangle newRect = {newPos.x - 8, newPos.y - 8, 16, 16};
+
+        // Check wall collision for knockback
+        bool collision_x = false, collision_y = false;
+        if (wallLayer && wallLayer->type == LAYER_TYPE_TILE_LAYER && wallLayer->exact.tileLayer.tiles) {
+            int tile_width = currentMap->tileWidth;
+            int tile_height = currentMap->tileHeight;
+
+            int left_tile = (int)(newRect.x) / tile_width;
+            int right_tile = (int)(newRect.x + newRect.width - 1) / tile_width;
+            int top_tile = (int)(newRect.y) / tile_height;
+            int bottom_tile = (int)(newRect.y + newRect.height - 1) / tile_height;
+
+            left_tile = std::max(0, std::min(left_tile, (int)currentMap->width - 1));
+            right_tile = std::max(0, std::min(right_tile, (int)currentMap->width - 1));
+            top_tile = std::max(0, std::min(top_tile, (int)currentMap->height - 1));
+            bottom_tile = std::max(0, std::min(bottom_tile, (int)currentMap->height - 1));
+
+            for (int y = top_tile; y <= bottom_tile; y++) {
+                for (int x = left_tile; x <= right_tile; x++) {
+                    unsigned int tileID = wallLayer->exact.tileLayer.tiles[y * wallLayer->exact.tileLayer.width + x];
+                    if (tileID != 0) {
+                        collision_x = true;
+                        collision_y = true; // Treat as full collision during knockback
+                        break;
+                    }
+                }
+                if (collision_x) break;
+            }
+        }
+
+        if (!collision_x && !collision_y) position = newPos;
         knockbackTimer -= dt;
         if (knockbackTimer <= 0.0f) {
             knockbackVelocity = {0, 0};
@@ -396,9 +471,85 @@ void Enemy::Update(float dt, const Player& player) {
         }
     }
 
-    // Move towards target
+    // Calculate new position
     Vector2 dir = Vector2Normalize(Vector2Subtract(target, position));
-    position = Vector2Add(position, Vector2Scale(dir, speed * dt * 60));
+    Vector2 newPos = Vector2Add(position, Vector2Scale(dir, speed * dt * 60));
+
+    // Check wall collision
+    Rectangle newRect = {newPos.x - 8, newPos.y - 8, 16, 16};
+    bool collision_x = false, collision_y = false;
+    if (wallLayer && wallLayer->type == LAYER_TYPE_TILE_LAYER && wallLayer->exact.tileLayer.tiles) {
+        int tile_width = currentMap->tileWidth;
+        int tile_height = currentMap->tileHeight;
+
+        // Check x movement
+        if (newPos.x != position.x) {
+            int left_tile = (int)(newRect.x) / tile_width;
+            int right_tile = (int)(newRect.x + newRect.width - 1) / tile_width;
+            int top_tile = (int)(newRect.y) / tile_height;
+            int bottom_tile = (int)(newRect.y + newRect.height - 1) / tile_height;
+
+            left_tile = std::max(0, std::min(left_tile, (int)currentMap->width - 1));
+            right_tile = std::max(0, std::min(right_tile, (int)currentMap->width - 1));
+            top_tile = std::max(0, std::min(top_tile, (int)currentMap->height - 1));
+            bottom_tile = std::max(0, std::min(bottom_tile, (int)currentMap->height - 1));
+
+            for (int y = top_tile; y <= bottom_tile; y++) {
+                for (int x = left_tile; x <= right_tile; x++) {
+                    unsigned int tileID = wallLayer->exact.tileLayer.tiles[y * wallLayer->exact.tileLayer.width + x];
+                    if (tileID != 0) {
+                        collision_x = true;
+                        break;
+                    }
+                }
+                if (collision_x) break;
+            }
+        }
+
+        // Check y movement
+        if (newPos.y != position.y) {
+            int left_tile = (int)(newRect.x) / tile_width;
+            int right_tile = (int)(newRect.x + newRect.width - 1) / tile_width;
+            int top_tile = (int)(newRect.y) / tile_height;
+            int bottom_tile = (int)(newRect.y + newRect.height - 1) / tile_height;
+
+            left_tile = std::max(0, std::min(left_tile, (int)currentMap->width - 1));
+            right_tile = std::max(0, std::min(right_tile, (int)currentMap->width - 1));
+            top_tile = std::max(0, std::min(top_tile, (int)currentMap->height - 1));
+            bottom_tile = std::max(0, std::min(bottom_tile, (int)currentMap->height - 1));
+
+            for (int y = top_tile; y <= bottom_tile; y++) {
+                for (int x = left_tile; x <= right_tile; x++) {
+                    unsigned int tileID = wallLayer->exact.tileLayer.tiles[y * wallLayer->exact.tileLayer.width + x];
+                    if (tileID != 0) {
+                        collision_y = true;
+                        break;
+                    }
+                }
+                if (collision_y) break;
+            }
+        }
+    }
+
+    // Apply movement if no wall collision
+    if (!collision_x) position.x = newPos.x;
+    if (!collision_y) position.y = newPos.y;
+
+    // Check collision with other enemies
+    Rectangle myHitbox = GetHitbox();
+    for (auto& other : enemies) {
+        if (other != this && other->IsAlive()) {
+            Rectangle otherHitbox = other->GetHitbox();
+            if (CheckCollisionRecs(myHitbox, otherHitbox)) {
+                // Resolve overlap by moving away
+                Vector2 pushDir = Vector2Normalize(Vector2Subtract(position, other->GetPosition()));
+                float overlap = 8.0f - Vector2Distance(position, other->GetPosition()); // Assume 16x16 hitbox, 8px radius
+                if (overlap > 0) {
+                    position = Vector2Add(position, Vector2Scale(pushDir, overlap));
+                }
+            }
+        }
+    }
 
     // Update facing direction
     if (dir.x != 0) facingRight = (dir.x > 0);
@@ -410,7 +561,6 @@ void Enemy::Update(float dt, const Player& player) {
         currentFrame = (currentFrame + 1) % 4;
     }
 }
-
 
 void Enemy::Draw() {
     if (!alive) return;
@@ -425,7 +575,6 @@ void Enemy::Draw() {
     DrawTexturePro(tex, src, dst, origin, 0.0f, WHITE);
 }
 
-
 void Enemy::TakeDamage(int dmg, Vector2 hitDirection) {
     health -= dmg;
     if (health <= 0) {
@@ -434,15 +583,19 @@ void Enemy::TakeDamage(int dmg, Vector2 hitDirection) {
     }
 
     // Apply knockback
-    Vector2 dirFromPlayer = Vector2Normalize(Vector2Subtract(position, player.pos)); 
+    Vector2 dirFromPlayer = Vector2Normalize(hitDirection); 
     knockbackVelocity = Vector2Scale(dirFromPlayer, 2.5f); // strength of knockback
     knockbackTimer = 0.15f; // knockback duration in seconds
 }
 
-
 bool Enemy::IsAlive() const { return alive; }
 int Enemy::GetDamage() const { return damage; }
 Vector2 Enemy::GetPosition() const { return position; }
+
+Rectangle Enemy::GetHitbox() const {
+    Texture2D tex = runFrames[currentFrame];
+    return {position.x - 8, position.y - 8, 16, 16}; // Assume a 16x16 hitbox centered on position
+}
 
 // Subclasses
 Goblin::Goblin(Vector2 pos)
@@ -458,7 +611,6 @@ BigDemon::BigDemon(Vector2 pos)
     : Enemy(pos, "big_demon", 80, 15, 1.3f, 120.0f) {}
 
 // Globals
-
 Camera2D camera; // creates camera
 
 Texture2D tilemap;
@@ -471,7 +623,6 @@ bool fullscreen = false;
 // Defining everything for the game
 void GameStartup() {
     printf("Hello");
-    //TmxMap* 
     currentMap = LoadTMX("assets/Tilemap/First.tmx");
     printf("Bye");
     wallLayer = nullptr;
@@ -508,13 +659,9 @@ void GameStartup() {
     // Default player position
     player.pos = {160, 90};
 
-    // Window setup
-    
 
     target = LoadRenderTexture(320, 180);
     SetTextureFilter(target.texture, TEXTURE_FILTER_POINT);
-
-    //tilemap = LoadTexture("assets/Tilemap/First.png");
 
     player.Load();
     Slash::LoadAssets();
@@ -542,12 +689,29 @@ void GameUpdate() {
         }
     }
 
-    if (IsKeyDown(KEY_ESCAPE)){
+    if (IsKeyDown(KEY_ESCAPE)) {
         // hold down to quit after 3 seconds
+        static float escHoldTime = 0.0f;
+        if (IsKeyDown(KEY_ESCAPE)) {
+            escHoldTime += GetFrameTime();
+            if (escHoldTime >= 3.0f) {
+                CloseWindow(); // exit game
+            }
+        } else {
+            escHoldTime = 0.0f; // reset timer if key released
+        }
     }
 
     player.Update();
     camera.target = player.pos;
+
+    // Check player-enemy collisions
+    Rectangle playerHitbox = player.GetHitbox();
+    for (auto& e : enemies) {
+        if (e->IsAlive() && CheckCollisionRecs(playerHitbox, e->GetHitbox())) {
+            player.TakeDamage(e->GetDamage());
+        }
+    }
 
     // Update slashes
     for (auto& s : slashes) s.Update(GetFrameTime());
@@ -581,12 +745,14 @@ void GameRender() {
     ClearBackground(BLACK);
 
     BeginMode2D(camera);
-    //DrawTexture(tilemap, 0, 0, WHITE);
     DrawTMX(currentMap, &camera, 0, 0, WHITE);
     player.Draw();
     for (auto& s : slashes) s.Draw();
     for (auto& e : enemies) e->Draw();
     EndMode2D();
+
+    // Draw health bar after camera mode (in screen space)
+    player.DrawHealthBar();
 
     EndTextureMode();
 
@@ -619,7 +785,6 @@ void GameShutdown() {
     Slash::UnloadAssets();
     for (auto& e : enemies) delete e;
     enemies.clear();
-    //UnloadTexture(tilemap);
     UnloadTMX(currentMap); // Free the TMX map
     UnloadRenderTexture(target);
     CloseWindow();

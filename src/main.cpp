@@ -147,6 +147,16 @@ public:
     BigDemon(Vector2 pos);
 };
 
+// Spawner positions
+std::vector<Vector2> goblinSpawners;
+std::vector<Vector2> impSpawners;
+std::vector<Vector2> bigZombieSpawners;
+std::vector<Vector2> bigDemonSpawners;
+
+// Spawn timers
+float smallEnemySpawnTimer = 0.0f;
+float bigEnemySpawnTimer = 0.0f;
+
 // Slash implementations
 void Slash::LoadAssets() {
     for (int i = 0; i < 3; i++) {
@@ -643,25 +653,9 @@ void ResetGame() {
     player.frameTimer = 0.0f;
     player.hitTimer = 0.0f;
 
-    // Reload enemies from map
-    for (uint32_t i = 0; i < currentMap->layersLength; i++) {
-        TmxLayer& layer = currentMap->layers[i];
-        if (layer.type == LAYER_TYPE_OBJECT_GROUP && layer.name && strcmp(layer.name, "Enemy") == 0 && layer.exact.objectGroup.objects) {
-            for (uint32_t j = 0; j < layer.exact.objectGroup.objectsLength; j++) {
-                TmxObject* obj = &layer.exact.objectGroup.objects[j];
-                if (obj->name) {
-                    if (strcmp(obj->name, "goblin") == 0)
-                        enemies.push_back(new Goblin({(float)obj->x, (float)obj->y}));
-                    else if (strcmp(obj->name, "imp") == 0)
-                        enemies.push_back(new Imp({(float)obj->x, (float)obj->y}));
-                    else if (strcmp(obj->name, "big_demon") == 0)
-                        enemies.push_back(new BigDemon({(float)obj->x, (float)obj->y}));
-                    else if (strcmp(obj->name, "big_zombie") == 0)
-                        enemies.push_back(new BigZombie({(float)obj->x, (float)obj->y}));
-                }
-            }
-        }
-    }
+    // Reset spawn timers
+    smallEnemySpawnTimer = 0.0f;
+    bigEnemySpawnTimer = 0.0f;
 
     // Reset camera
     camera.target = player.pos;
@@ -689,21 +683,22 @@ void GameStartup() {
         TraceLog(LOG_WARNING, "Failed to load start screen texture: assets/Images/start.png");
     }
 
-    // Load enemies from object layer
+    // Collect spawner positions from object layer
     for (uint32_t i = 0; i < currentMap->layersLength; i++) {
         TmxLayer& layer = currentMap->layers[i];
         if (layer.type == LAYER_TYPE_OBJECT_GROUP && layer.name && strcmp(layer.name, "Enemy") == 0 && layer.exact.objectGroup.objects) {
             for (uint32_t j = 0; j < layer.exact.objectGroup.objectsLength; j++) {
                 TmxObject* obj = &layer.exact.objectGroup.objects[j];
                 if (obj->name) {
+                    Vector2 pos = {(float)obj->x, (float)obj->y};
                     if (strcmp(obj->name, "goblin") == 0)
-                        enemies.push_back(new Goblin({(float)obj->x, (float)obj->y}));
+                        goblinSpawners.push_back(pos);
                     else if (strcmp(obj->name, "imp") == 0)
-                        enemies.push_back(new Imp({(float)obj->x, (float)obj->y}));
+                        impSpawners.push_back(pos);
                     else if (strcmp(obj->name, "big_demon") == 0)
-                        enemies.push_back(new BigDemon({(float)obj->x, (float)obj->y}));
+                        bigDemonSpawners.push_back(pos);
                     else if (strcmp(obj->name, "big_zombie") == 0)
-                        enemies.push_back(new BigZombie({(float)obj->x, (float)obj->y}));
+                        bigZombieSpawners.push_back(pos);
                 }
             }
         }
@@ -826,6 +821,30 @@ void GameUpdate() {
                 [](Enemy* e) { return !e->IsAlive(); }),
             enemies.end()
         );
+
+        // Handle spawning
+        smallEnemySpawnTimer += dt;
+        bigEnemySpawnTimer += dt;
+
+        if (smallEnemySpawnTimer >= 15.0f) {
+            smallEnemySpawnTimer = 0.0f;
+            for (auto pos : goblinSpawners) {
+                enemies.push_back(new Goblin(pos));
+            }
+            for (auto pos : impSpawners) {
+                enemies.push_back(new Imp(pos));
+            }
+        }
+
+        if (bigEnemySpawnTimer >= 60.0f) {
+            bigEnemySpawnTimer = 0.0f;
+            for (auto pos : bigZombieSpawners) {
+                enemies.push_back(new BigZombie(pos));
+            }
+            for (auto pos : bigDemonSpawners) {
+                enemies.push_back(new BigDemon(pos));
+            }
+        }
     }
 }
 

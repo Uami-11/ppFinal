@@ -9,6 +9,12 @@
 #define RAYTMX_IMPLEMENTATION
 #include "raytmx.h"
 
+// Game state enum
+enum class GameState {
+    StartScreen,
+    Playing
+};
+
 // comment
 TmxMap* currentMap = nullptr;
 TmxLayer* wallLayer = nullptr;
@@ -379,10 +385,6 @@ void Player::TakeDamage(int dmg) {
     if (damageCooldown <= 0.0f) {
         health = std::max(0, health - dmg);
         damageCooldown = damageCooldownDuration; // Reset cooldown
-        if (health <= 0) {
-            // Optional: Handle player death (e.g., game over or respawn)
-            TraceLog(LOG_INFO, "Player died!");
-        }
     }
 }
 
@@ -612,13 +614,58 @@ BigDemon::BigDemon(Vector2 pos)
 
 // Globals
 Camera2D camera; // creates camera
+Texture2D startScreen; // Start screen texture
+GameState gameState = GameState::StartScreen; // Start in start screen
+GameState targetState = GameState::StartScreen;
+float fadeAlpha = 0.0f; // Start transparent
+float fadeSpeed = 1.0f; // Fade duration in seconds
+bool fadingOut = false; // Track if fading to black
 
 Texture2D tilemap;
-
 RenderTexture2D target; // Camera size
 bool fullscreen = false;
 
-// Functions 
+// Reset game state to initial conditions
+void ResetGame() {
+    // Clear existing enemies
+    for (auto& e : enemies) delete e;
+    enemies.clear();
+    slashes.clear();
+
+    // Reset player
+    player.pos = {160, 90};
+    player.vel = {0, 0};
+    player.facingRight = true;
+    player.health = player.maxHealth;
+    player.damageCooldown = 0.0f;
+    player.state = PlayerState::Idle;
+    player.currentFrame = 0;
+    player.frameTimer = 0.0f;
+    player.hitTimer = 0.0f;
+
+    // Reload enemies from map
+    for (uint32_t i = 0; i < currentMap->layersLength; i++) {
+        TmxLayer& layer = currentMap->layers[i];
+        if (layer.type == LAYER_TYPE_OBJECT_GROUP && layer.name && strcmp(layer.name, "Enemy") == 0 && layer.exact.objectGroup.objects) {
+            for (uint32_t j = 0; j < layer.exact.objectGroup.objectsLength; j++) {
+                TmxObject* obj = &layer.exact.objectGroup.objects[j];
+                if (obj->name) {
+                    if (strcmp(obj->name, "goblin") == 0)
+                        enemies.push_back(new Goblin({(float)obj->x, (float)obj->y}));
+                    else if (strcmp(obj->name, "imp") == 0)
+                        enemies.push_back(new Imp({(float)obj->x, (float)obj->y}));
+                    else if (strcmp(obj->name, "big_demon") == 0)
+                        enemies.push_back(new BigDemon({(float)obj->x, (float)obj->y}));
+                    else if (strcmp(obj->name, "big_zombie") == 0)
+                        enemies.push_back(new BigZombie({(float)obj->x, (float)obj->y}));
+                }
+            }
+        }
+    }
+
+    // Reset camera
+    camera.target = player.pos;
+}
 
 // Defining everything for the game
 void GameStartup() {
@@ -634,6 +681,12 @@ void GameStartup() {
             wallLayer = &layer;
             break;
         }
+    }
+
+    // Load start screen
+    startScreen = LoadTexture("assets/Images/start.png");
+    if (startScreen.id == 0) {
+        TraceLog(LOG_WARNING, "Failed to load start screen texture: assets/Images/start.png");
     }
 
     // Load enemies from object layer
@@ -659,7 +712,6 @@ void GameStartup() {
     // Default player position
     player.pos = {160, 90};
 
-
     target = LoadRenderTexture(320, 180);
     SetTextureFilter(target.texture, TEXTURE_FILTER_POINT);
 
@@ -675,68 +727,106 @@ void GameStartup() {
 
 // Updates things every frame
 void GameUpdate() {
-    // Toggle fullscreen (borderless) with Alt+Enter
-    if (IsKeyPressed(KEY_ENTER) && (IsKeyDown(KEY_LEFT_ALT) || IsKeyDown(KEY_RIGHT_ALT))) {
-        fullscreen = !fullscreen;
-        if (fullscreen) {
-            SetWindowState(FLAG_WINDOW_UNDECORATED | FLAG_WINDOW_TOPMOST);
-            SetWindowSize(GetMonitorWidth(0), GetMonitorHeight(0));
-            SetWindowPosition(0, 0);
-        } else {
-            ClearWindowState(FLAG_WINDOW_UNDECORATED | FLAG_WINDOW_TOPMOST);
-            SetWindowSize(1280, 720);
-            SetWindowPosition(100, 100);
+    float dt = GetFrameTime();
+
+    // Handle fade transitions
+    if (fadingOut) {
+        fadeAlpha += dt / fadeSpeed;
+        if (fadeAlpha >= 1.0f) {
+            fadeAlpha = 1.0f;
+        }
+    } else {
+        fadeAlpha -= dt / fadeSpeed;
+        if (fadeAlpha <= 0.0f) {
+            fadeAlpha = 0.0f;
         }
     }
 
-    if (IsKeyDown(KEY_ESCAPE)) {
-        // hold down to quit after 3 seconds
-        static float escHoldTime = 0.0f;
+    // Check if we need to switch states after fading to black
+    if (fadingOut && fadeAlpha >= 1.0f) {
+        gameState = targetState;
+        if (gameState == GameState::Playing) {
+            ResetGame();
+        }
+        fadingOut = false;
+    }
+
+    if (gameState == GameState::StartScreen) {
+        // Check for any key press to start game
+        if ((IsKeyPressed(KEY_SPACE) || IsKeyPressed(KEY_Z) || IsKeyPressed(KEY_J) || IsKeyPressed(KEY_ENTER)) && !fadingOut) {
+            targetState = GameState::Playing;
+            fadingOut = true;
+        }
+    } else if (gameState == GameState::Playing) {
+        // Toggle fullscreen (borderless) with Alt+Enter
+        if (IsKeyPressed(KEY_ENTER) && (IsKeyDown(KEY_LEFT_ALT) || IsKeyDown(KEY_RIGHT_ALT))) {
+            fullscreen = !fullscreen;
+            if (fullscreen) {
+                SetWindowState(FLAG_WINDOW_UNDECORATED | FLAG_WINDOW_TOPMOST);
+                SetWindowSize(GetMonitorWidth(0), GetMonitorHeight(0));
+                SetWindowPosition(0, 0);
+            } else {
+                ClearWindowState(FLAG_WINDOW_UNDECORATED | FLAG_WINDOW_TOPMOST);
+                SetWindowSize(1280, 720);
+                SetWindowPosition(100, 100);
+            }
+        }
+
         if (IsKeyDown(KEY_ESCAPE)) {
-            escHoldTime += GetFrameTime();
-            if (escHoldTime >= 3.0f) {
-                CloseWindow(); // exit game
+            // hold down to quit after 3 seconds
+            static float escHoldTime = 0.0f;
+            if (IsKeyDown(KEY_ESCAPE)) {
+                escHoldTime += GetFrameTime();
+                if (escHoldTime >= 3.0f) {
+                    CloseWindow(); // exit game
+                }
+            } else {
+                escHoldTime = 0.0f; // reset timer if key released
             }
-        } else {
-            escHoldTime = 0.0f; // reset timer if key released
         }
-    }
 
-    player.Update();
-    camera.target = player.pos;
+        player.Update();
+        camera.target = player.pos;
 
-    // Check player-enemy collisions
-    Rectangle playerHitbox = player.GetHitbox();
-    for (auto& e : enemies) {
-        if (e->IsAlive() && CheckCollisionRecs(playerHitbox, e->GetHitbox())) {
-            player.TakeDamage(e->GetDamage());
-        }
-    }
-
-    // Update slashes
-    for (auto& s : slashes) s.Update(GetFrameTime());
-    for (auto& s : slashes) {
-        Rectangle hitbox = s.GetHitbox();
+        // Check player-enemy collisions
+        Rectangle playerHitbox = player.GetHitbox();
         for (auto& e : enemies) {
-            if (CheckCollisionPointRec(e->GetPosition(), hitbox)) {
-                e->TakeDamage(10, Vector2Normalize(Vector2Subtract(e->GetPosition(), player.pos))); // player deals 10 damage
+            if (e->IsAlive() && CheckCollisionRecs(playerHitbox, e->GetHitbox())) {
+                player.TakeDamage(e->GetDamage());
             }
         }
-    }
-    // Remove finished ones
-    slashes.erase(
-        std::remove_if(slashes.begin(), slashes.end(),
+
+        // Check for player death
+        if (player.health <= 0 && !fadingOut) {
+            targetState = GameState::StartScreen;
+            fadingOut = true;
+        }
+
+        // Update slashes
+        for (auto& s : slashes) s.Update(GetFrameTime());
+        for (auto& s : slashes) {
+            Rectangle hitbox = s.GetHitbox();
+            for (auto& e : enemies) {
+                if (CheckCollisionPointRec(e->GetPosition(), hitbox)) {
+                    e->TakeDamage(10, Vector2Normalize(Vector2Subtract(e->GetPosition(), player.pos))); // player deals 10 damage
+                }
+            }
+        }
+        // Remove finished slashes
+        slashes.erase(
+            std::remove_if(slashes.begin(), slashes.end(),
                 [](Slash& s){ return s.finished; }),
-        slashes.end()
-    );
+            slashes.end()
+        );
 
-    for (auto& e : enemies) e->Update(GetFrameTime(), player);
+        for (auto& e : enemies) e->Update(GetFrameTime(), player);
 
-    enemies.erase(
-        std::remove_if(enemies.begin(), enemies.end(),
-                   [](Enemy* e) { return !e->IsAlive(); }),
-        enemies.end()
-    );
+        enemies.erase(
+            std::remove_if(enemies.begin(), enemies.end(),
+                [](Enemy* e) { return !e->IsAlive(); }),
+            enemies.end()
+        );
+    }
 }
 
 void GameRender() {
@@ -744,15 +834,40 @@ void GameRender() {
     BeginTextureMode(target);
     ClearBackground(BLACK);
 
-    BeginMode2D(camera);
-    DrawTMX(currentMap, &camera, 0, 0, WHITE);
-    player.Draw();
-    for (auto& s : slashes) s.Draw();
-    for (auto& e : enemies) e->Draw();
-    EndMode2D();
+    if (gameState == GameState::StartScreen) {
+        // Draw start screen
+        if (startScreen.id != 0) {
+            float scaleX = (float)320 / startScreen.width;
+            float scaleY = (float)180 / startScreen.height;
+            float scale = fmin(scaleX, scaleY);
+            float destWidth = startScreen.width * scale;
+            float destHeight = startScreen.height * scale;
+            float offsetX = (320 - destWidth) / 2;
+            float offsetY = (180 - destHeight) / 2;
 
-    // Draw health bar after camera mode (in screen space)
-    player.DrawHealthBar();
+            DrawTexturePro(
+                startScreen,
+                {0, 0, (float)startScreen.width, (float)startScreen.height},
+                {offsetX, offsetY, destWidth, destHeight},
+                {0, 0}, 0.0f, WHITE
+            );
+        }
+    } else if (gameState == GameState::Playing) {
+        BeginMode2D(camera);
+        DrawTMX(currentMap, &camera, 0, 0, WHITE);
+        player.Draw();
+        for (auto& s : slashes) s.Draw();
+        for (auto& e : enemies) e->Draw();
+        EndMode2D();
+
+        // Draw health bar after camera mode (in screen space)
+        player.DrawHealthBar();
+    }
+
+    // Draw fade overlay
+    if (fadeAlpha > 0.0f) {
+        DrawRectangle(0, 0, 320, 180, Fade(BLACK, fadeAlpha));
+    }
 
     EndTextureMode();
 
@@ -785,6 +900,7 @@ void GameShutdown() {
     Slash::UnloadAssets();
     for (auto& e : enemies) delete e;
     enemies.clear();
+    UnloadTexture(startScreen); // Unload start screen texture
     UnloadTMX(currentMap); // Free the TMX map
     UnloadRenderTexture(target);
     CloseWindow();

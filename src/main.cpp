@@ -91,11 +91,18 @@ enum class EnemyState {
     Chase
 };
 
+enum class EnemyType {
+    Goblin,
+    Imp,
+    BigZombie,
+    BigDemon
+};
+
 class Enemy {
 protected:
     Vector2 position;
     Vector2 spawnPos;
-    Texture2D runFrames[4];
+    Texture2D* runFrames; // Pointer to preloaded textures
     int currentFrame;
     float frameTimer;
     float frameTime;
@@ -105,46 +112,55 @@ protected:
     bool alive;
     EnemyState state;
     float detectRange;
-
     Vector2 target;
     bool facingRight;           // For sprite flipping
     Vector2 knockbackVelocity;  // Knockback applied when hit
     float knockbackTimer;       // Duration for knockback
+    EnemyType type;             // To identify enemy type for pooling
 
 public:
-    Enemy(Vector2 pos, const char* spritePrefix, int baseHp, int baseDmg, float spd, float range);
+    Enemy(Vector2 pos, EnemyType t, Texture2D* frames, int baseHp, int baseDmg, float spd, float range);
     virtual ~Enemy();
 
     virtual void Update(float dt, const Player& player);
     virtual void Draw();
     virtual void TakeDamage(int dmg, Vector2 hitDirection);
+    void Reset(Vector2 pos, EnemyType t, int baseHp, int baseDmg, float spd, float range);
 
     bool IsAlive() const;
     int GetDamage() const;
     Vector2 GetPosition() const;
-    Rectangle GetHitbox() const; // New method to get enemy hitbox for collision
+    Rectangle GetHitbox() const;
+    EnemyType GetType() const { return type; }
 };
 
+// Preloaded textures for each enemy type
+static Texture2D goblinFrames[4];
+static Texture2D impFrames[4];
+static Texture2D bigZombieFrames[4];
+static Texture2D bigDemonFrames[4];
+
 std::vector<Enemy*> enemies;
+std::vector<Enemy*> enemyPool; // Object pool for enemies
 
 class Goblin : public Enemy {
 public:
-    Goblin(Vector2 pos) : Enemy(pos, "goblin", 30, 5, 1.5f, 80.0f) {}
+    Goblin(Vector2 pos) : Enemy(pos, EnemyType::Goblin, goblinFrames, 30, 5, 1.5f, 80.0f) {}
 };
 
 class Imp : public Enemy {
 public:
-    Imp(Vector2 pos) : Enemy(pos, "imp", 20, 3, 2.0f, 90.0f) {}
+    Imp(Vector2 pos) : Enemy(pos, EnemyType::Imp, impFrames, 20, 3, 2.0f, 90.0f) {}
 };
 
 class BigZombie : public Enemy {
 public:
-    BigZombie(Vector2 pos) : Enemy(pos, "big_zombie", 50, 10, 1.2f, 100.0f) {}
+    BigZombie(Vector2 pos) : Enemy(pos, EnemyType::BigZombie, bigZombieFrames, 50, 10, 1.2f, 100.0f) {}
 };
 
 class BigDemon : public Enemy {
 public:
-    BigDemon(Vector2 pos) : Enemy(pos, "big_demon", 80, 15, 1.3f, 120.0f) {}
+    BigDemon(Vector2 pos) : Enemy(pos, EnemyType::BigDemon, bigDemonFrames, 80, 15, 1.3f, 120.0f) {}
 };
 
 // Spawner positions
@@ -220,7 +236,6 @@ Rectangle Slash::GetHitbox() {
 
 // Player implementations
 void Player::Load() {
-    // thanks 0x72 for making very good sprite names
     for (int i = 0; i < 4; i++) {
         idleAnim[i] = LoadTexture(("assets/Player/knight_f_idle_anim_f" + std::to_string(i) + ".png").c_str());
         runAnim[i] = LoadTexture(("assets/Player/knight_f_run_anim_f" + std::to_string(i) + ".png").c_str()); 
@@ -412,28 +427,36 @@ Rectangle Player::GetHitbox() const {
 }
 
 // Enemy implementations
-Enemy::Enemy(Vector2 pos, const char* spritePrefix, int baseHp, int baseDmg, float spd, float range)
-    : position(pos), spawnPos(pos), currentFrame(0), frameTimer(0.0f), frameTime(0.15f), speed(spd),
-      alive(true), state(EnemyState::Patrol), detectRange(range),
-      target(pos), facingRight(true), knockbackVelocity({0,0}), knockbackTimer(0.0f)
+Enemy::Enemy(Vector2 pos, EnemyType t, Texture2D* frames, int baseHp, int baseDmg, float spd, float range)
+    : position(pos), spawnPos(pos), runFrames(frames), currentFrame(0), frameTimer(0.0f), frameTime(0.15f), speed(spd),
+      alive(true), state(EnemyState::Chase), detectRange(range), target(pos), facingRight(true),
+      knockbackVelocity({0,0}), knockbackTimer(0.0f), type(t)
 {
-    health = (int)(baseHp * pow(1.1f, currentWave - 1));
+    health = (int)(baseHp * pow(1.5f, currentWave - 1)); // 50% HP increase per wave
     damage = (int)(baseDmg * pow(1.2f, currentWave - 1));
-    for (int i = 0; i < 4; i++) {
-        std::string path = "assets/Enemies/" + std::string(spritePrefix) + "_run_anim_f" + std::to_string(i) + ".png";
-        TraceLog(LOG_INFO, "Loading enemy frame: %s", path.c_str());
-        Texture2D texture = LoadTexture(path.c_str());
-        if (texture.id == 0) {
-            TraceLog(LOG_WARNING, "Failed to load texture: %s", path.c_str());
-            runFrames[i] = {0};
-        } else {
-            runFrames[i] = texture;
-        }
-    }
 }
 
 Enemy::~Enemy() {
-    for (int i = 0; i < 4; i++) UnloadTexture(runFrames[i]);
+    // Textures are managed globally, so no unloading here
+}
+
+void Enemy::Reset(Vector2 pos, EnemyType t, int baseHp, int baseDmg, float spd, float range) {
+    position = pos;
+    spawnPos = pos;
+    type = t;
+    currentFrame = 0;
+    frameTimer = 0.0f;
+    frameTime = 0.15f;
+    speed = spd;
+    health = (int)(baseHp * pow(1.5f, currentWave - 1));
+    damage = (int)(baseDmg * pow(1.2f, currentWave - 1));
+    alive = true;
+    state = EnemyState::Chase;
+    detectRange = range;
+    target = pos;
+    facingRight = true;
+    knockbackVelocity = {0, 0};
+    knockbackTimer = 0.0f;
 }
 
 void Enemy::Update(float dt, const Player& player) {
@@ -481,18 +504,9 @@ void Enemy::Update(float dt, const Player& player) {
         return; // Skip normal AI while knocked back
     }
 
-    // Check distance to player
-    float dist = Vector2Distance(position, player.pos);
-    if (dist < detectRange) {
-        state = EnemyState::Chase;
-        target = player.pos;
-    } else {
-        state = EnemyState::Patrol;
-        if (Vector2Distance(position, target) < 5.0f) {
-            target.x = GetRandomValue((int)spawnPos.x - 100, (int)spawnPos.x + 100);
-            target.y = GetRandomValue((int)spawnPos.y - 100, (int)spawnPos.y + 100);
-        }
-    }
+    // Always chase the player
+    state = EnemyState::Chase;
+    target = player.pos;
 
     // Calculate new position
     Vector2 dir = Vector2Normalize(Vector2Subtract(target, position));
@@ -636,10 +650,82 @@ Texture2D tilemap;
 RenderTexture2D target; // Camera size
 bool fullscreen = false;
 
+// Load all enemy textures
+void LoadEnemyTextures() {
+    for (int i = 0; i < 4; i++) {
+        goblinFrames[i] = LoadTexture(("assets/Enemies/goblin_run_anim_f" + std::to_string(i) + ".png").c_str());
+        impFrames[i] = LoadTexture(("assets/Enemies/imp_run_anim_f" + std::to_string(i) + ".png").c_str());
+        bigZombieFrames[i] = LoadTexture(("assets/Enemies/big_zombie_run_anim_f" + std::to_string(i) + ".png").c_str());
+        bigDemonFrames[i] = LoadTexture(("assets/Enemies/big_demon_run_anim_f" + std::to_string(i) + ".png").c_str());
+    }
+}
+
+void UnloadEnemyTextures() {
+    for (int i = 0; i < 4; i++) {
+        UnloadTexture(goblinFrames[i]);
+        UnloadTexture(impFrames[i]);
+        UnloadTexture(bigZombieFrames[i]);
+        UnloadTexture(bigDemonFrames[i]);
+    }
+}
+
+// Initialize enemy pool
+void InitializeEnemyPool() {
+    // Create a pool of enemies (adjust size based on expected max enemies)
+    for (int i = 0; i < 100; i++) { // Arbitrary pool size, adjust as needed
+        enemyPool.push_back(new Goblin({0, 0}));
+        enemyPool.push_back(new Imp({0, 0}));
+        enemyPool.push_back(new BigZombie({0, 0}));
+        enemyPool.push_back(new BigDemon({0, 0}));
+    }
+    // Set all pooled enemies to inactive
+    for (auto& e : enemyPool) {
+        e->TakeDamage(9999, {0, 0}); // Ensure they're "dead"
+    }
+}
+
+// Get an enemy from the pool
+Enemy* GetEnemyFromPool(Vector2 pos, EnemyType type) {
+    for (auto& e : enemyPool) {
+        if (!e->IsAlive() && e->GetType() == type) {
+            switch (type) {
+                case EnemyType::Goblin:
+                    e->Reset(pos, type, 30, 5, 1.5f, 80.0f);
+                    break;
+                case EnemyType::Imp:
+                    e->Reset(pos, type, 20, 3, 2.0f, 90.0f);
+                    break;
+                case EnemyType::BigZombie:
+                    e->Reset(pos, type, 50, 10, 1.2f, 100.0f);
+                    break;
+                case EnemyType::BigDemon:
+                    e->Reset(pos, type, 80, 15, 1.3f, 120.0f);
+                    break;
+            }
+            return e;
+        }
+    }
+    // If pool is exhausted, create a new enemy (fallback)
+    switch (type) {
+        case EnemyType::Goblin:
+            return new Goblin(pos);
+        case EnemyType::Imp:
+            return new Imp(pos);
+        case EnemyType::BigZombie:
+            return new BigZombie(pos);
+        case EnemyType::BigDemon:
+            return new BigDemon(pos);
+        default:
+            return nullptr;
+    }
+}
+
 // Reset game state to initial conditions
 void ResetGame() {
-    // Clear existing enemies
-    for (auto& e : enemies) delete e;
+    // Clear active enemies
+    for (auto& e : enemies) {
+        e->TakeDamage(9999, {0, 0}); // Return to pool by marking as dead
+    }
     enemies.clear();
     slashes.clear();
 
@@ -647,8 +733,8 @@ void ResetGame() {
     player.pos = {160, 90};
     player.vel = {0, 0};
     player.facingRight = true;
-    player.health = player.maxHealth;
     player.maxHealth = 100;
+    player.health = player.maxHealth; // Ensure current health is reset
     player.damageCooldown = 0.0f;
     player.state = PlayerState::Idle;
     player.currentFrame = 0;
@@ -660,8 +746,8 @@ void ResetGame() {
     smallEnemySpawnTimer = 0.0f;
     bigEnemySpawnTimer = 0.0f;
     minuteTimer = 0.0f;
-    smallEnemySpawnInterval = 15.0f;
-    bigEnemySpawnInterval = 60.0f;
+    smallEnemySpawnInterval = 5.0f;
+    bigEnemySpawnInterval = 20.0f;
 
     // Reset wave
     currentWave = 1;
@@ -722,6 +808,8 @@ void GameStartup() {
 
     player.Load();
     Slash::LoadAssets();
+    LoadEnemyTextures();
+    InitializeEnemyPool();
 
     camera.target = player.pos;
     camera.offset = {320.0f / 2, 180.0f / 2};
@@ -826,6 +914,7 @@ void GameUpdate() {
 
         for (auto& e : enemies) e->Update(GetFrameTime(), player);
 
+        // Move dead enemies back to pool
         enemies.erase(
             std::remove_if(enemies.begin(), enemies.end(),
                 [](Enemy* e) { return !e->IsAlive(); }),
@@ -865,20 +954,28 @@ void GameUpdate() {
         if (smallEnemySpawnTimer >= smallEnemySpawnInterval) {
             smallEnemySpawnTimer = 0.0f;
             for (auto pos : goblinSpawners) {
-                enemies.push_back(new Goblin(pos));
+                for (int i = 0; i < 2; i++) { // Spawn 2 goblins
+                    Enemy* e = GetEnemyFromPool(pos, EnemyType::Goblin);
+                    if (e) enemies.push_back(e);
+                }
             }
             for (auto pos : impSpawners) {
-                enemies.push_back(new Imp(pos));
+                for (int i = 0; i < 2; i++) { // Spawn 2 imps
+                    Enemy* e = GetEnemyFromPool(pos, EnemyType::Imp);
+                    if (e) enemies.push_back(e);
+                }
             }
         }
 
         if (bigEnemySpawnTimer >= bigEnemySpawnInterval) {
             bigEnemySpawnTimer = 0.0f;
             for (auto pos : bigZombieSpawners) {
-                enemies.push_back(new BigZombie(pos));
+                Enemy* e = GetEnemyFromPool(pos, EnemyType::BigZombie);
+                if (e) enemies.push_back(e);
             }
             for (auto pos : bigDemonSpawners) {
-                enemies.push_back(new BigDemon(pos));
+                Enemy* e = GetEnemyFromPool(pos, EnemyType::BigDemon);
+                if (e) enemies.push_back(e);
             }
         }
     }
@@ -959,7 +1056,9 @@ void GameRender() {
 void GameShutdown() {
     player.Unload();
     Slash::UnloadAssets();
-    for (auto& e : enemies) delete e;
+    UnloadEnemyTextures();
+    for (auto& e : enemyPool) delete e;
+    enemyPool.clear();
     enemies.clear();
     UnloadTexture(startScreen); // Unload start screen texture
     UnloadTMX(currentMap); // Free the TMX map

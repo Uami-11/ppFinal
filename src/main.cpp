@@ -112,7 +112,7 @@ protected:
     float knockbackTimer;       // Duration for knockback
 
 public:
-    Enemy(Vector2 pos, const char* spritePrefix, int hp, int dmg, float spd, float range);
+    Enemy(Vector2 pos, const char* spritePrefix, int baseHp, int baseDmg, float spd, float range);
     virtual ~Enemy();
 
     virtual void Update(float dt, const Player& player);
@@ -129,22 +129,22 @@ std::vector<Enemy*> enemies;
 
 class Goblin : public Enemy {
 public:
-    Goblin(Vector2 pos);
+    Goblin(Vector2 pos) : Enemy(pos, "goblin", 30, 5, 1.5f, 80.0f) {}
 };
 
 class Imp : public Enemy {
 public:
-    Imp(Vector2 pos);
+    Imp(Vector2 pos) : Enemy(pos, "imp", 20, 3, 2.0f, 90.0f) {}
 };
 
 class BigZombie : public Enemy {
 public:
-    BigZombie(Vector2 pos);
+    BigZombie(Vector2 pos) : Enemy(pos, "big_zombie", 50, 10, 1.2f, 100.0f) {}
 };
 
 class BigDemon : public Enemy {
 public:
-    BigDemon(Vector2 pos);
+    BigDemon(Vector2 pos) : Enemy(pos, "big_demon", 80, 15, 1.3f, 120.0f) {}
 };
 
 // Spawner positions
@@ -156,6 +156,12 @@ std::vector<Vector2> bigDemonSpawners;
 // Spawn timers
 float smallEnemySpawnTimer = 0.0f;
 float bigEnemySpawnTimer = 0.0f;
+
+// Wave system
+int currentWave = 1;
+int killsThisWave = 0;
+int requiredKills[8] = {3, 8, 20, 50, 110, 200, 350, 500};
+float playerDamage = 10.0f;
 
 // Slash implementations
 void Slash::LoadAssets() {
@@ -403,11 +409,13 @@ Rectangle Player::GetHitbox() const {
 }
 
 // Enemy implementations
-Enemy::Enemy(Vector2 pos, const char* spritePrefix, int hp, int dmg, float spd, float range)
+Enemy::Enemy(Vector2 pos, const char* spritePrefix, int baseHp, int baseDmg, float spd, float range)
     : position(pos), spawnPos(pos), currentFrame(0), frameTimer(0.0f), frameTime(0.15f), speed(spd),
-      health(hp), damage(dmg), alive(true), state(EnemyState::Patrol), detectRange(range),
+      alive(true), state(EnemyState::Patrol), detectRange(range),
       target(pos), facingRight(true), knockbackVelocity({0,0}), knockbackTimer(0.0f)
 {
+    health = (int)(baseHp * pow(1.1f, currentWave - 1));
+    damage = (int)(baseDmg * pow(1.2f, currentWave - 1));
     for (int i = 0; i < 4; i++) {
         std::string path = "assets/Enemies/" + std::string(spritePrefix) + "_run_anim_f" + std::to_string(i) + ".png";
         TraceLog(LOG_INFO, "Loading enemy frame: %s", path.c_str());
@@ -590,7 +598,10 @@ void Enemy::Draw() {
 void Enemy::TakeDamage(int dmg, Vector2 hitDirection) {
     health -= dmg;
     if (health <= 0) {
-        alive = false;
+        if (alive) {
+            alive = false;
+            killsThisWave++;
+        }
         return;
     }
 
@@ -608,19 +619,6 @@ Rectangle Enemy::GetHitbox() const {
     Texture2D tex = runFrames[currentFrame];
     return {position.x - 8, position.y - 8, 16, 16}; // Assume a 16x16 hitbox centered on position
 }
-
-// Subclasses
-Goblin::Goblin(Vector2 pos)
-    : Enemy(pos, "goblin", 30, 5, 1.5f, 80.0f) {}
-
-Imp::Imp(Vector2 pos)
-    : Enemy(pos, "imp", 20, 3, 2.0f, 90.0f) {}
-
-BigZombie::BigZombie(Vector2 pos)
-    : Enemy(pos, "big_zombie", 50, 10, 1.2f, 100.0f) {}
-
-BigDemon::BigDemon(Vector2 pos)
-    : Enemy(pos, "big_demon", 80, 15, 1.3f, 120.0f) {}
 
 // Globals
 Camera2D camera; // creates camera
@@ -647,15 +645,21 @@ void ResetGame() {
     player.vel = {0, 0};
     player.facingRight = true;
     player.health = player.maxHealth;
+    player.maxHealth = 100;
     player.damageCooldown = 0.0f;
     player.state = PlayerState::Idle;
     player.currentFrame = 0;
     player.frameTimer = 0.0f;
     player.hitTimer = 0.0f;
+    playerDamage = 10.0f;
 
     // Reset spawn timers
     smallEnemySpawnTimer = 0.0f;
     bigEnemySpawnTimer = 0.0f;
+
+    // Reset wave
+    currentWave = 1;
+    killsThisWave = 0;
 
     // Reset camera
     camera.target = player.pos;
@@ -802,8 +806,8 @@ void GameUpdate() {
         for (auto& s : slashes) {
             Rectangle hitbox = s.GetHitbox();
             for (auto& e : enemies) {
-                if (CheckCollisionPointRec(e->GetPosition(), hitbox)) {
-                    e->TakeDamage(10, Vector2Normalize(Vector2Subtract(e->GetPosition(), player.pos))); // player deals 10 damage
+                if (e->IsAlive() && CheckCollisionRecs(hitbox, e->GetHitbox())) {
+                    e->TakeDamage((int)playerDamage, Vector2Normalize(Vector2Subtract(e->GetPosition(), player.pos))); // player deals damage
                 }
             }
         }
@@ -821,6 +825,19 @@ void GameUpdate() {
                 [](Enemy* e) { return !e->IsAlive(); }),
             enemies.end()
         );
+
+        // Check for wave progression
+        if (currentWave <= 8 && killsThisWave >= requiredKills[currentWave - 1]) {
+            player.maxHealth = (int)(player.maxHealth * 1.2f);
+            player.health = player.maxHealth;
+            playerDamage *= 1.1f;
+            killsThisWave = 0;
+            currentWave++;
+            if (currentWave > 8 && !fadingOut) {
+                targetState = GameState::StartScreen;
+                fadingOut = true;
+            }
+        }
 
         // Handle spawning
         smallEnemySpawnTimer += dt;
@@ -881,6 +898,12 @@ void GameRender() {
 
         // Draw health bar after camera mode (in screen space)
         player.DrawHealthBar();
+
+        // Draw wave info
+        if (currentWave <= 8) {
+            DrawText(TextFormat("WAVE %d", currentWave), 320 - 100, 10, 20, WHITE);
+            DrawText(TextFormat("%d / %d", killsThisWave, requiredKills[currentWave - 1]), 320 - 100, 35, 10, WHITE);
+        }
     }
 
     // Draw fade overlay

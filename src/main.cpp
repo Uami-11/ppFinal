@@ -88,6 +88,7 @@ public:
     void Draw();
     void DrawHealthBar(); // New method to draw health bar
     void TakeDamage(int dmg); // New method to take damage
+    void Heal(int amount); // New method to heal player
     Rectangle GetHitbox() const; // New method to get player hitbox
 };
 
@@ -195,6 +196,14 @@ Texture2D hpCardTexture;
 bool showUpgradeScreen = false;
 Rectangle attackCardRect = {80, 30, 80, 120}; // Left card
 Rectangle hpCardRect = {200, 30, 80, 120}; // Right card
+
+// Audio
+Music backgroundMusic;
+float musicVolume = 0.0f; // Start at 0 for fade-in
+const float fadeDuration = 1.0f; // Duration in seconds for fade in/out
+float fadeTimer = 0.0f;
+bool isFadingIn = false;
+bool isFadingOut = false;
 
 // Slash implementations
 void Slash::LoadAssets() {
@@ -454,6 +463,10 @@ void Player::TakeDamage(int dmg) {
     }
 }
 
+void Player::Heal(int amount) {
+    health = std::min(maxHealth, health + amount);
+}
+
 Rectangle Player::GetHitbox() const {
     return {pos.x - 8, pos.y - 8, 16, 16}; // 16x16 hitbox centered on position
 }
@@ -650,6 +663,10 @@ void Enemy::TakeDamage(int dmg, Vector2 hitDirection) {
         if (alive) {
             alive = false;
             totalKills++;
+            // Heal player by 50% of max HP when a big enemy is defeated
+            if (type == EnemyType::BigZombie || type == EnemyType::BigDemon) {
+                player.Heal(player.maxHealth / 2);
+            }
         }
         return;
     }
@@ -787,6 +804,14 @@ void ResetGame() {
     currentWave = 1;
     totalKills = 0;
     showUpgradeScreen = false;
+
+    // Reset audio for new game
+    isFadingOut = false;
+    isFadingIn = true;
+    fadeTimer = 0.0f;
+    musicVolume = 0.0f;
+    SetMusicVolume(backgroundMusic, musicVolume);
+    PlayMusicStream(backgroundMusic);
 }
 
 // Defining everything for the game
@@ -804,6 +829,15 @@ void GameStartup() {
             break;
         }
     }
+
+    // Initialize audio
+    InitAudioDevice();
+    backgroundMusic = LoadMusicStream("assets/Sound/Pandora Palace.mp3");
+    if (!IsMusicStreamPlaying(backgroundMusic)) {
+        TraceLog(LOG_WARNING, "Failed to load music: assets/Sound/Pandora Palace.mp3");
+    }
+    SetMusicVolume(backgroundMusic, musicVolume);
+    PlayMusicStream(backgroundMusic);
 
     // Load start screen
     startScreen = LoadTexture("assets/Images/start.png");
@@ -857,12 +891,42 @@ void GameStartup() {
     camera.offset = {320.0f / 2, 180.0f / 2};
     camera.zoom = 1.0f;
 
+    isFadingIn = true;
+    fadeTimer = 0.0f;
+
     SetExitKey(KEY_F1);
 }
 
 // Updates things every frame
 void GameUpdate() {
     float dt = GetFrameTime();
+
+    // Handle audio fade
+    if (isFadingIn) {
+        fadeTimer += dt;
+        musicVolume = fmin(1.0f, fadeTimer / fadeDuration);
+        SetMusicVolume(backgroundMusic, musicVolume);
+        if (fadeTimer >= fadeDuration) {
+            isFadingIn = false;
+            fadeTimer = 0.0f;
+        }
+    }
+    if (isFadingOut) {
+        fadeTimer += dt;
+        musicVolume = fmax(0.0f, 1.0f - (fadeTimer / fadeDuration));
+        SetMusicVolume(backgroundMusic, musicVolume);
+        if (fadeTimer >= fadeDuration) {
+            isFadingOut = false;
+            StopMusicStream(backgroundMusic);
+        }
+    }
+    // Ensure music plays during Playing and UpgradeScreen states
+    if (gameState == GameState::Playing || gameState == GameState::UpgradeScreen) {
+        if (!IsMusicStreamPlaying(backgroundMusic)) {
+            PlayMusicStream(backgroundMusic);
+        }
+    }
+    UpdateMusicStream(backgroundMusic);
 
     // Handle fade transitions
     if (fadingOut) {
@@ -935,6 +999,8 @@ void GameUpdate() {
         if (player.health <= 0 && !fadingOut) {
             targetState = GameState::StartScreen;
             fadingOut = true;
+            isFadingOut = true;
+            fadeTimer = 0.0f;
         }
 
         // Update slashes
@@ -1052,6 +1118,8 @@ void GameUpdate() {
     if (currentWave > 8 && !fadingOut && gameState != GameState::UpgradeScreen) {
         targetState = GameState::StartScreen;
         fadingOut = true;
+        isFadingOut = true;
+        fadeTimer = 0.0f;
     }
 }
 
@@ -1167,6 +1235,8 @@ void GameShutdown() {
     UnloadTexture(hpCardTexture);
     UnloadTMX(currentMap); // Free the TMX map
     UnloadRenderTexture(target);
+    UnloadMusicStream(backgroundMusic); // Unload music
+    CloseAudioDevice(); // Close audio device
     CloseWindow();
 }
 

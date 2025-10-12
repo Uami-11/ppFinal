@@ -156,10 +156,13 @@ std::vector<Vector2> bigDemonSpawners;
 // Spawn timers
 float smallEnemySpawnTimer = 0.0f;
 float bigEnemySpawnTimer = 0.0f;
+float minuteTimer = 0.0f;
+float smallEnemySpawnInterval = 15.0f;
+float bigEnemySpawnInterval = 60.0f;
 
 // Wave system
 int currentWave = 1;
-int killsThisWave = 0;
+int totalKills = 0;
 int requiredKills[8] = {3, 8, 20, 50, 110, 200, 350, 500};
 float playerDamage = 10.0f;
 
@@ -600,7 +603,7 @@ void Enemy::TakeDamage(int dmg, Vector2 hitDirection) {
     if (health <= 0) {
         if (alive) {
             alive = false;
-            killsThisWave++;
+            totalKills++;
         }
         return;
     }
@@ -656,10 +659,13 @@ void ResetGame() {
     // Reset spawn timers
     smallEnemySpawnTimer = 0.0f;
     bigEnemySpawnTimer = 0.0f;
+    minuteTimer = 0.0f;
+    smallEnemySpawnInterval = 15.0f;
+    bigEnemySpawnInterval = 60.0f;
 
     // Reset wave
     currentWave = 1;
-    killsThisWave = 0;
+    totalKills = 0;
 
     // Reset camera
     camera.target = player.pos;
@@ -668,7 +674,7 @@ void ResetGame() {
 // Defining everything for the game
 void GameStartup() {
     printf("Hello");
-    currentMap = LoadTMX("assets/Tilemap/First.tmx");
+    currentMap = LoadTMX("assets/Tilemap/WAVESPAWN.tmx");
     printf("Bye");
     wallLayer = nullptr;
 
@@ -826,24 +832,37 @@ void GameUpdate() {
             enemies.end()
         );
 
+        // Update minute timer
+        minuteTimer += dt;
+
         // Check for wave progression
-        if (currentWave <= 8 && killsThisWave >= requiredKills[currentWave - 1]) {
+        if (currentWave <= 8 && totalKills >= requiredKills[currentWave - 1]) {
             player.maxHealth = (int)(player.maxHealth * 1.2f);
             player.health = player.maxHealth;
             playerDamage *= 1.1f;
-            killsThisWave = 0;
             currentWave++;
+            // Increase spawn speed
+            smallEnemySpawnInterval *= 0.9f;
+            bigEnemySpawnInterval *= 0.9f;
+            minuteTimer = 0.0f; // Reset minute timer
             if (currentWave > 8 && !fadingOut) {
                 targetState = GameState::StartScreen;
                 fadingOut = true;
             }
         }
 
+        // Check for minute-based spawn speed increase
+        if (minuteTimer >= 60.0f) {
+            smallEnemySpawnInterval *= 0.9f;
+            bigEnemySpawnInterval *= 0.9f;
+            minuteTimer = 0.0f; // Reset minute timer
+        }
+
         // Handle spawning
         smallEnemySpawnTimer += dt;
         bigEnemySpawnTimer += dt;
 
-        if (smallEnemySpawnTimer >= 15.0f) {
+        if (smallEnemySpawnTimer >= smallEnemySpawnInterval) {
             smallEnemySpawnTimer = 0.0f;
             for (auto pos : goblinSpawners) {
                 enemies.push_back(new Goblin(pos));
@@ -853,7 +872,7 @@ void GameUpdate() {
             }
         }
 
-        if (bigEnemySpawnTimer >= 60.0f) {
+        if (bigEnemySpawnTimer >= bigEnemySpawnInterval) {
             bigEnemySpawnTimer = 0.0f;
             for (auto pos : bigZombieSpawners) {
                 enemies.push_back(new BigZombie(pos));
@@ -902,7 +921,7 @@ void GameRender() {
         // Draw wave info
         if (currentWave <= 8) {
             DrawText(TextFormat("WAVE %d", currentWave), 320 - 100, 10, 20, WHITE);
-            DrawText(TextFormat("%d / %d", killsThisWave, requiredKills[currentWave - 1]), 320 - 100, 35, 10, WHITE);
+            DrawText(TextFormat("KILLS: %d", totalKills), 320 - 100, 35, 10, WHITE);
         }
     }
 

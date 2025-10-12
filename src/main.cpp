@@ -192,10 +192,14 @@ float playerDamage = 10.0f;
 
 // Upgrade system
 Texture2D attackCardTexture;
+Texture2D attackCardHoverTexture;
 Texture2D hpCardTexture;
+Texture2D hpCardHoverTexture;
 bool showUpgradeScreen = false;
 Rectangle attackCardRect = {80, 30, 80, 120}; // Left card
 Rectangle hpCardRect = {200, 30, 80, 120}; // Right card
+bool isAttackHovered = false;
+bool isHpHovered = false;
 
 // Audio
 Music backgroundMusic;
@@ -847,12 +851,20 @@ void GameStartup() {
 
     // Load upgrade card textures
     attackCardTexture = LoadTexture("assets/Images/attack.png");
+    attackCardHoverTexture = LoadTexture("assets/Images/attack1.png");
     hpCardTexture = LoadTexture("assets/Images/hp.png");
+    hpCardHoverTexture = LoadTexture("assets/Images/hp1.png");
     if (attackCardTexture.id == 0) {
         TraceLog(LOG_WARNING, "Failed to load attack card texture: assets/Images/attack.png");
     }
+    if (attackCardHoverTexture.id == 0) {
+        TraceLog(LOG_WARNING, "Failed to load attack hover texture: assets/Images/attack1.png");
+    }
     if (hpCardTexture.id == 0) {
         TraceLog(LOG_WARNING, "Failed to load hp card texture: assets/Images/hp.png");
+    }
+    if (hpCardHoverTexture.id == 0) {
+        TraceLog(LOG_WARNING, "Failed to load hp hover texture: assets/Images/hp1.png");
     }
 
     // Collect spawner positions from object layer
@@ -1087,25 +1099,28 @@ void GameUpdate() {
             }
         }
     } else if (gameState == GameState::UpgradeScreen) {
+        // Check for mouse hover on upgrade cards
+        Vector2 mousePos = GetMousePosition();
+        float scaleX = (float)GetScreenWidth() / 320;
+        float scaleY = (float)GetScreenHeight() / 180;
+        float scale = fmin(scaleX, scaleY);
+        float offsetX = (GetScreenWidth() - 320 * scale) / 2;
+        float offsetY = (GetScreenHeight() - 180 * scale) / 2;
+        Vector2 renderMousePos = {
+            (mousePos.x - offsetX) / scale,
+            (mousePos.y - offsetY) / scale
+        };
+
+        isAttackHovered = CheckCollisionPointRec(renderMousePos, attackCardRect);
+        isHpHovered = CheckCollisionPointRec(renderMousePos, hpCardRect);
+
         // Check for mouse click on upgrade cards
         if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
-            Vector2 mousePos = GetMousePosition();
-            // Convert to render texture coordinates
-            float scaleX = (float)GetScreenWidth() / 320;
-            float scaleY = (float)GetScreenHeight() / 180;
-            float scale = fmin(scaleX, scaleY);
-            float offsetX = (GetScreenWidth() - 320 * scale) / 2;
-            float offsetY = (GetScreenHeight() - 180 * scale) / 2;
-            Vector2 renderMousePos = {
-                (mousePos.x - offsetX) / scale,
-                (mousePos.y - offsetY) / scale
-            };
-
-            if (CheckCollisionPointRec(renderMousePos, attackCardRect)) {
+            if (isAttackHovered) {
                 playerDamage *= 1.2f; // 20% attack boost
                 showUpgradeScreen = false;
                 gameState = GameState::Playing;
-            } else if (CheckCollisionPointRec(renderMousePos, hpCardRect)) {
+            } else if (isHpHovered) {
                 player.maxHealth = (int)(player.maxHealth * 1.2f); // 20% HP boost
                 player.health = player.maxHealth; // Restore health
                 showUpgradeScreen = false;
@@ -1169,10 +1184,11 @@ void GameRender() {
             DrawRectangle(0, 0, 320, 180, Fade(BLACK, 0.5f));
 
             // Draw attack card
-            if (attackCardTexture.id != 0) {
+            Texture2D currentAttackTexture = isAttackHovered ? attackCardHoverTexture : attackCardTexture;
+            if (currentAttackTexture.id != 0) {
                 DrawTexturePro(
-                    attackCardTexture,
-                    {0, 0, (float)attackCardTexture.width, (float)attackCardTexture.height},
+                    currentAttackTexture,
+                    {0, 0, (float)currentAttackTexture.width, (float)currentAttackTexture.height},
                     attackCardRect,
                     {0, 0}, 0.0f, WHITE
                 );
@@ -1180,10 +1196,11 @@ void GameRender() {
             }
 
             // Draw HP card
-            if (hpCardTexture.id != 0) {
+            Texture2D currentHpTexture = isHpHovered ? hpCardHoverTexture : hpCardTexture;
+            if (currentHpTexture.id != 0) {
                 DrawTexturePro(
-                    hpCardTexture,
-                    {0, 0, (float)hpCardTexture.width, (float)hpCardTexture.height},
+                    currentHpTexture,
+                    {0, 0, (float)currentHpTexture.width, (float)currentHpTexture.height},
                     hpCardRect,
                     {0, 0}, 0.0f, WHITE
                 );
@@ -1232,7 +1249,9 @@ void GameShutdown() {
     enemies.clear();
     UnloadTexture(startScreen); // Unload start screen texture
     UnloadTexture(attackCardTexture); // Unload upgrade card textures
+    UnloadTexture(attackCardHoverTexture);
     UnloadTexture(hpCardTexture);
+    UnloadTexture(hpCardHoverTexture);
     UnloadTMX(currentMap); // Free the TMX map
     UnloadRenderTexture(target);
     UnloadMusicStream(backgroundMusic); // Unload music

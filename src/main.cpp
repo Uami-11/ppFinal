@@ -481,8 +481,8 @@ Enemy::Enemy(Vector2 pos, EnemyType t, Texture2D* frames, int baseHp, int baseDm
       alive(true), state(EnemyState::Chase), detectRange(range), target(pos), facingRight(true),
       knockbackVelocity({0,0}), knockbackTimer(0.0f), type(t)
 {
-    health = (int)(baseHp * pow(1.5f, currentWave - 1)); // 50% HP increase per wave
-    damage = (int)(baseDmg * pow(1.2f, currentWave - 1));
+    health = (int)(baseHp * pow(1.3f, currentWave - 1)); // 30% HP increase per wave
+    damage = (int)(baseDmg * pow(1.5f, currentWave - 1)); // 50% damage increase per wave
 }
 
 Enemy::~Enemy() {
@@ -497,8 +497,8 @@ void Enemy::Reset(Vector2 pos, EnemyType t, int baseHp, int baseDmg, float spd, 
     frameTimer = 0.0f;
     frameTime = 0.15f;
     speed = spd;
-    health = (int)(baseHp * pow(1.5f, currentWave - 1));
-    damage = (int)(baseDmg * pow(1.2f, currentWave - 1));
+    health = (int)(baseHp * pow(1.3f, currentWave - 1)); // 30% HP increase per wave
+    damage = (int)(baseDmg * pow(1.5f, currentWave - 1)); // 50% damage increase per wave
     alive = true;
     state = EnemyState::Chase;
     detectRange = range;
@@ -836,9 +836,9 @@ void GameStartup() {
 
     // Initialize audio
     InitAudioDevice();
-    backgroundMusic = LoadMusicStream("assets/Sound/Pandora Palace.mp3");
+    backgroundMusic = LoadMusicStream("assets/Sound/Pandora Palace.wav");
     if (!IsMusicStreamPlaying(backgroundMusic)) {
-        TraceLog(LOG_WARNING, "Failed to load music: assets/Sound/Pandora Palace.mp3");
+        TraceLog(LOG_WARNING, "Failed to load music: assets/Sound/Pandora Palace.wav");
     }
     SetMusicVolume(backgroundMusic, musicVolume);
     PlayMusicStream(backgroundMusic);
@@ -1204,7 +1204,7 @@ void GameRender() {
                     hpCardRect,
                     {0, 0}, 0.0f, WHITE
                 );
-                DrawText("HP +20%", hpCardRect.x + 10, hpCardRect.y + 10, 10, WHITE);
+                DrawText("HP +20%", hpCardRect.x + 15, hpCardRect.y + 8, 10, WHITE);
             }
         }
     }

@@ -1,7 +1,7 @@
 # ppFinal
 Final C++ Project made with the Raylib and Raytmx libraries
 
-[![Watch the video](https://github.com/Uami-11/ppFinal/main/raylibThumbnail.png)](https://github.com/Uami-11/ppFinal/main/raylibVideo.mp4)
+[![Watch the video](https://github.com/Uami-11/ppFinal/blob/main/raylibThumbnail.png)](https://github.com/Uami-11/ppFinal/blob/main/raylibVideo.mp4)
 
 
 <img width="1282" height="753" alt="image" src="https://github.com/user-attachments/assets/a8a1d675-3834-47b8-a2cb-30eda05ba06e" />

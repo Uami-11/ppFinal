@@ -1,3 +1,11 @@
-# Auto detect text files and perform LF normalization
+# Normalize line endings
 * text=auto
+
+# Mark generated files
 Makefile linguist-generated=true
+
+# Treat everything as vendored by default
+* linguist-vendored
+
+# Explicitly mark C++ source files as non-vendored
+src/*.cpp linguist-vendored=false

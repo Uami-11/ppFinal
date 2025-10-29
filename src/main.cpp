@@ -1261,7 +1261,7 @@ void GameShutdown() {
 
 // Main 
 int main() {
-    InitWindow(1280, 720, "Raylib Player Example");
+    InitWindow(1280, 720, "Wave Game");
     printf("Hello, I have been initialized");
     SetTargetFPS(60);
     GameStartup();
